@@ -351,7 +351,13 @@ init_config:
 
 instances:
   - host: localhost
-    # port: 3003
+    # port: 3000
+
+    ### Specify the below tls_name and tls_ca_file to enable tls communication with aerospike
+    ### The tls_name must match the certificate CN (Common Name).
+    ### The tls_ca_file must point to a valid location of the CA public certificate.
+    # tls_name: None
+    # tls_ca_file: None
 
     # All metrics collected by default. You probably don't want to do this,
     # so list the ones you do want here. Check with asinfo -v statistics -l

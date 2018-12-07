@@ -10,10 +10,9 @@
 
 
 # stdlib
-import socket
 import re
-from contextlib import closing
 from collections import namedtuple
+import aerospike
 
 # project
 from checks import AgentCheck
@@ -38,6 +37,7 @@ AEROSPIKE_CAP_CONFIG_KEY_MAP = {
 }
 
 Addr = namedtuple('Addr', ['host', 'port'])
+AddrTls = namedtuple('AddrTls', ['host', 'port', 'tlsname'])
 
 
 def parse_namespace(data, namespace, secondary):
@@ -69,36 +69,35 @@ class AerospikeCheck(AgentCheck):
         self.connections = {}
 
     def check(self, instance):
-        addr, metrics, namespace_metrics, required_namespaces, tags = \
+        addr, metrics, namespace_metrics, required_namespaces, tags, tlscafile = \
             self._get_config(instance)
 
         try:
-            conn = self._get_connection(addr)
+            conn = self._get_connection(addr, tlscafile)
 
-            with closing(conn.makefile('r')) as fp:
-                conn.send('statistics\r')
-                self._process_data(instance, fp, CLUSTER_METRIC_TYPE, metrics, tags=tags)
+            fpdata = conn.info_node('statistics',addr).rstrip().split('\t')[1].rstrip()
+            self._process_data(instance, fpdata, CLUSTER_METRIC_TYPE, metrics, tags=tags)
 
-                namespaces = self._get_namespaces(conn, fp, required_namespaces)
+            namespaces = self._get_namespaces(conn, addr, required_namespaces)
 
-                for ns in namespaces:
-                    conn.send('namespace/%s\r' % ns)
-                    self._process_data(instance, fp, NAMESPACE_METRIC_TYPE, namespace_metrics, tags+['namespace:%s' % ns])
+            for ns in namespaces:
+                fpdata = conn.info_node('namespace/%s' % ns, addr).rstrip().split('\t')[1].rstrip()
+                self._process_data(instance, fpdata, NAMESPACE_METRIC_TYPE, namespace_metrics, tags+['namespace:%s' % ns])
 
-                    conn.send('sindex/%s\r' % ns)
-                    for idx in parse_namespace(fp.readline().split(';')[:-1], ns, 'indexname'):
-                        conn.send('sindex/%s/%s\r' % (ns, idx))
-                        self._process_data(instance, fp, SINDEX_METRIC_TYPE, [],
-                                           tags+['namespace:%s' % ns, 'sindex:%s' % idx])
+                fpdata = conn.info_node('sindex/%s' % ns, addr).rstrip().split('\t')[1].rstrip()
+                for idx in parse_namespace(fpdata.split(';')[:-1], ns, 'indexname'):
+                    fpdata = conn.info_node('namespace/%s/%s' % (ns, idx), addr).rstrip().split('\t')[1].rstrip()
+                    self._process_data(instance, fpdata, SINDEX_METRIC_TYPE, [],
+                                       tags+['namespace:%s' % ns, 'sindex:%s' % idx])
 
-                    conn.send('sets/%s\r' % ns)
-                    for s in parse_namespace(fp.readline().split(';'), ns, 'set'):
-                        conn.send('sets/%s/%s\r' % (ns, s))
-                        self._process_data(instance, fp, SET_METRIC_TYPE, [],
-                                           tags+['namespace:%s' % ns, 'set:%s' % s], delim=':')
+                fpdata = conn.info_node('sets/%s' % ns, addr).rstrip().split('\t')[1].rstrip()
+                for s in parse_namespace(fpdata.split(';'), ns, 'set'):
+                    fpdata = conn.info_node('sets/%s' % (ns, s), addr).rstrip().split('\t')[1].rstrip()
+                    self._process_data(instance, fpdata, SET_METRIC_TYPE, [],
+                                       tags+['namespace:%s' % ns, 'set:%s' % s], delim=':')
 
-                conn.send('throughput:\r')
-                self._process_throughput(fp.readline().rstrip().split(';'), NAMESPACE_TPS_METRIC_TYPE, namespaces, tags)
+            fpdata = conn.info_node('throughput:', addr).rstrip().split('\t')[1].rstrip()
+            self._process_throughput(fpdata.split(';'), NAMESPACE_TPS_METRIC_TYPE, namespaces, tags)
 
             self.service_check(SERVICE_CHECK_NAME, AgentCheck.OK, tags=tags)
         except Exception as e:
@@ -109,30 +108,35 @@ class AerospikeCheck(AgentCheck):
     @staticmethod
     def _get_config(instance):
         host = instance.get('host', 'localhost')
-        port = int(instance.get('port', 3003))
+        port = int(instance.get('port', 3000))
+        tlsname = instance.get('tls_name', None)
+        tlscafile = instance.get('tls_ca_file', None)
         metrics = set(instance.get('metrics', []))
         namespace_metrics = set(instance.get('namespace_metrics', []))
         required_namespaces = instance.get('namespaces', None)
         tags = instance.get('tags', [])
 
-        return (Addr(host, port), metrics, namespace_metrics, required_namespaces, tags)
+        if tlsname is not None:
+            return (AddrTls(host, port, tlsname), metrics, namespace_metrics, required_namespaces, tags, tlscafile)
+        else:
+            return (Addr(host, port), metrics, namespace_metrics, required_namespaces, tags, tlscafile)
 
-    def _get_namespaces(self, conn, fp, required_namespaces=[]):
-        conn.send('namespaces\r')
-        namespaces = fp.readline().rstrip().split(';')
+    def _get_namespaces(self, conn, addr, required_namespaces=[]):
+        fpdata = conn.info_node('namespaces', addr).rstrip().split('\t')[1].rstrip()
+        namespaces = fpdata.split(';')
         if required_namespaces:
             return [v for v in namespaces if v in required_namespaces]
         else:
             return namespaces
 
-    def _get_connection(self, addr):
-        conn = self.connections.get(addr, None)
-
-        if conn is None:
-            conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            conn.connect(addr)
-            self.connections[addr] = conn
-
+    def _get_connection(self, addr, tlscafile):
+        config = {'hosts': [addr]}
+        if tlscafile is not None:
+            config["tls"] = {
+                'enable': True,
+                'cafile': tlscafile,
+            }
+        conn = aerospike.client(config).connect()
         return conn
 
     def _process_throughput(self, data, metric_type, namespaces, tags={}):
@@ -167,7 +171,7 @@ class AerospikeCheck(AgentCheck):
             self._send(metric_type, key, val, tags + ['namespace:%s' % ns])
 
     def _process_data(self, instance, fp, metric_type, required_keys=[], tags={}, delim=';'):
-        d = dict(x.split('=', 1) for x in fp.readline().rstrip().split(delim))
+        d = dict(x.split('=', 1) for x in fp.rstrip().split(delim))
         if required_keys:
             required_data = {k: d[k] for k in required_keys if k in d}
         else:
