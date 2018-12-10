@@ -359,6 +359,13 @@ instances:
     # tls_name: None
     # tls_ca_file: None
 
+    ### auth:
+    ### auth_type is required to be set for username and password to be used
+    ### auth_type must be one of: INTERNAL, EXTERNAL, EXTERNAL_INSECURE
+    # auth_type: INTERNAL
+    # username: some_user
+    # password: some_password
+
     # All metrics collected by default. You probably don't want to do this,
     # so list the ones you do want here. Check with asinfo -v statistics -l
     # and asinfo -v namespace/YOURNAMESPACE -l.

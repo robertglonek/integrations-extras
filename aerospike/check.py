@@ -69,11 +69,11 @@ class AerospikeCheck(AgentCheck):
         self.connections = {}
 
     def check(self, instance):
-        addr, metrics, namespace_metrics, required_namespaces, tags, tlscafile = \
+        addr, metrics, namespace_metrics, required_namespaces, tags, tlscafile, username, password, auth_type = \
             self._get_config(instance)
 
         try:
-            conn = self._get_connection(addr, tlscafile)
+            conn = self._get_connection(addr, tlscafile, username, password, auth_type)
 
             fpdata = conn.info_node('statistics',addr).rstrip().split('\t')[1].rstrip()
             self._process_data(instance, fpdata, CLUSTER_METRIC_TYPE, metrics, tags=tags)
@@ -111,15 +111,18 @@ class AerospikeCheck(AgentCheck):
         port = int(instance.get('port', 3000))
         tlsname = instance.get('tls_name', None)
         tlscafile = instance.get('tls_ca_file', None)
+        username = instance.get('username', None)
+        password = instance.get('password', None)
+        auth_type = instance.get('auth_type', None)
         metrics = set(instance.get('metrics', []))
         namespace_metrics = set(instance.get('namespace_metrics', []))
         required_namespaces = instance.get('namespaces', None)
         tags = instance.get('tags', [])
 
         if tlsname is not None:
-            return (AddrTls(host, port, tlsname), metrics, namespace_metrics, required_namespaces, tags, tlscafile)
+            return (AddrTls(host, port, tlsname), metrics, namespace_metrics, required_namespaces, tags, tlscafile, username, password, auth_type)
         else:
-            return (Addr(host, port), metrics, namespace_metrics, required_namespaces, tags, tlscafile)
+            return (Addr(host, port), metrics, namespace_metrics, required_namespaces, tags, tlscafile, username, password, auth_type)
 
     def _get_namespaces(self, conn, addr, required_namespaces=[]):
         fpdata = conn.info_node('namespaces', addr).rstrip().split('\t')[1].rstrip()
@@ -129,14 +132,23 @@ class AerospikeCheck(AgentCheck):
         else:
             return namespaces
 
-    def _get_connection(self, addr, tlscafile):
+    def _get_connection(self, addr, tlscafile, username, password, auth_type):
         config = {'hosts': [addr]}
         if tlscafile is not None:
             config["tls"] = {
                 'enable': True,
                 'cafile': tlscafile,
             }
-        conn = aerospike.client(config).connect()
+        if auth_type is not None:
+            if auth_type == "INTERNAL":
+                config["policies"]["auth_mode"] = aerospike.AUTH_INTERNAL
+            elif auth_type == "EXTERNAL":
+                config["policies"]["auth_mode"] = aerospike.AUTH_EXTERNAL
+            elif auth_type == "EXTERNAL_INSECURE":
+                config["policies"]["auth_mode"] = aerospike.AUTH_EXTERNAL_INSECURE
+            conn = aerospike.client(config).connect(username, password)
+        else:
+            conn = aerospike.client(config).connect()
         return conn
 
     def _process_throughput(self, data, metric_type, namespaces, tags={}):
