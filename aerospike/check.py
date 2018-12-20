@@ -140,12 +140,20 @@ class AerospikeCheck(AgentCheck):
                 'cafile': tlscafile,
             }
         if auth_type is not None:
-            if auth_type == "INTERNAL":
-                config["policies"]["auth_mode"] = aerospike.AUTH_INTERNAL
-            elif auth_type == "EXTERNAL":
-                config["policies"]["auth_mode"] = aerospike.AUTH_EXTERNAL
-            elif auth_type == "EXTERNAL_INSECURE":
-                config["policies"]["auth_mode"] = aerospike.AUTH_EXTERNAL_INSECURE
+            try:
+                aerospike.AUTH_INTERNAL
+            except:
+                pass
+            else:
+                if auth_type == "INTERNAL":
+                    config["policies"] = {}
+                    config["policies"]["auth_mode"] = aerospike.AUTH_INTERNAL
+                elif auth_type == "EXTERNAL":
+                    config["policies"] = {}
+                    config["policies"]["auth_mode"] = aerospike.AUTH_EXTERNAL
+                elif auth_type == "EXTERNAL_INSECURE":
+                    config["policies"] = {}
+                    config["policies"]["auth_mode"] = aerospike.AUTH_EXTERNAL_INSECURE
             conn = aerospike.client(config).connect(username, password)
         else:
             conn = aerospike.client(config).connect()
