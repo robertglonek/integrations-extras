@@ -20,14 +20,22 @@ To install the Aerospike check on your host:
 1. [Download the Datadog Agent][1].
 2. Download the [`check.py` file][2] for Aerospike.
 3. Place it in the Agent's `checks.d` directory.
-4. Rename it to `aerospike.py`.
+4. Rename it to `check_aerospike.py`.
+5. Run: sudo -u dd-agent /opt/datadog-agent/embedded/bin/pip install aerospike
+
+Note: you may need to install libssl-dev and libssl1.0.0, or similar version to satisfy aerospike python module dependencies.
 
 ### Configuration
 
 To configure the Aerospike check: 
 
-1. Create a `aerospike.d/` folder in the `conf.d/` folder at the root of your Agent's directory. 
+Either:
+1. Create a `check_aerospike.d/` folder in the `conf.d/` folder at the root of your Agent's directory. 
 2. Create a `conf.yaml` file in the `aerospike.d/` folder previously created.
+Or:
+1. Put the `conf.yaml` file in the `conf.d` folder if running datadog 5.x
+2. Name it `check_aerospike.yaml`
+
 3. Consult the [sample aerospike.yaml][3] file and copy its content in the `conf.yaml` file.
 4. Edit the `conf.yaml` file to point to your server and port, set the masters to monitor.
 5. [Restart the Agent][4].
